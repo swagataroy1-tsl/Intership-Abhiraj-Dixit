@@ -1,0 +1,14 @@
+Field Key Initial-Values data-Element Data-Type Length Decimal Coordinate Short-Description 
+MANDT	MANDT	CLNT	3	0	0	Client
+HRYID	HRYID	CHAR	42	0	0	Hierarchy ID
+HRYVER	HRYVERSN	NUMC	15	0	0	Hierarchy version
+NODECLS	NODECLS	CHAR	12	0	0	Node class
+HRYNODE	HRYNODE	CHAR	50	0	0	Hierarchy node
+PARNODE	PARNODE	CHAR	50	0	0	Hierarchy parent node
+HRYVALTO	DATBI	DATS	8	0	0	Valid To Date
+HRYVALFROM	DATAB	DATS	8	0	0	Valid-From Date
+BALIND	BALIND	CHAR	1	0	0	Balance indicator
+NODETYPE	NODETYP	CHAR	1	0	0	Hierarchy node type
+NODEVALUE	NODEVALUE	CHAR	40	0	0	Node value
+HRYSEQNBR	HRYSEQNBR	NUMC	6	0	0	Hierarchy Sequence Number
+HRYLEVEL	HRYLEVEL	NUMC	6	0	0	Hierarchy Level
