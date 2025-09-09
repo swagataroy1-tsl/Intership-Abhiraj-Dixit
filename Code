@@ -1,0 +1,443 @@
+*&---------------------------------------------------------------------*
+*& Report YMFAR_FSITMHIER_POC_REP
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ymfar_fsitmhier_poc_rep.
+
+TABLES: ymfat_fsitmhier.
+
+DATA: hlvl      TYPE string, "TYPE hrylevel VALUE 0,
+      seq       TYPE string, "TYPE hrylevel VALUE 1,
+      currseq   TYPE int2 VALUE 1,
+      currhier  TYPE string VALUE '001',
+      subhier   TYPE string VALUE '000',
+      subhn(3)  TYPE c,
+      flag      TYPE int2 VALUE 0,
+      parent    TYPE string, "hryseqnbr VALUE IS INITIAL,
+      counter   TYPE int2 VALUE 0,
+      temp      TYPE string,
+      lv_length TYPE string,
+      nodetype  TYPE nodetyp,
+      hrynode   TYPE hrynode,
+      lines     TYPE int4.
+
+TYPES: BEGIN OF ty_data,
+         idx       TYPE int2,
+         hierarchy TYPE string,
+         hrynode   TYPE hrynode,
+         parnode   TYPE parnode,
+         nodetype  TYPE	nodetyp,
+         nodevalue TYPE nodevalue,
+         hryseqnbr TYPE hryseqnbr,
+         hrylevel  TYPE	hrylevel,
+         nodetxt   TYPE nodetxt,
+       END OF ty_data.
+
+DATA: wa_data  TYPE ty_data,
+      it_data  TYPE TABLE OF ty_data,
+      wa_final TYPE ty_data,
+      it_final TYPE TABLE OF ty_data.
+
+DATA: inphier TYPE hryid,
+      nodecls TYPE nodecls.
+
+"Field Catalog
+DATA: t_fieldcatalog TYPE slis_t_fieldcat_alv WITH HEADER LINE,
+      t_gd_tab_group TYPE slis_t_sp_group_alv,
+      t_gd_layout    TYPE slis_layout_alv,
+      t_gd_repid     LIKE sy-repid.
+
+DATA: gt_list  TYPE vrm_values,
+      gwa_list TYPE vrm_value.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+
+  PARAMETERS: phier LIKE hrrp_node-hryid AS LISTBOX VISIBLE LENGTH 50 OBLIGATORY.
+
+  PARAMETERS: disp AS CHECKBOX DEFAULT 'X',
+              load AS CHECKBOX.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+
+INITIALIZATION.
+
+  gwa_list-key = 'FS ITEM HIERARCHY(BS_PL_IND)'.
+  gwa_list-text = '(CS15/Y1/BS_PL_IND)'.
+  APPEND gwa_list TO gt_list.
+  gwa_list-key = 'FS ITEM HIERARCHY (BS_PL_IFR)'.
+  gwa_list-text = '(CS15/Y1/BS_PL_IFR)'.
+  APPEND gwa_list TO gt_list.
+  gwa_list-key = 'PROFIT CENTER HIERARCHY'.
+  gwa_list-text = '(CS04/TS00/PC_HIER_TSL)'.
+  APPEND gwa_list TO gt_list.
+  gwa_list-key = 'CASH FLOW HIERARCHY'.
+  gwa_list-text = '(CS16/Y1/CF_INDAS)'.
+  APPEND gwa_list TO gt_list.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id              = 'PHIER'
+      values          = gt_list
+    EXCEPTIONS
+      id_illegal_name = 1
+      OTHERS          = 2.
+
+START-OF-SELECTION.
+
+  PERFORM get_data.
+  IF load = 'X'.
+    PERFORM load_data_to_table.
+  ENDIF.
+  IF disp = 'X'.
+    IF it_final IS NOT INITIAL.
+      PERFORM display_data.
+    ELSE.
+      IF load NE 'X'.
+        MESSAGE 'No Data Found - Table is Empty!' TYPE 'I'.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+FORM get_data.
+
+***   Select query to fetch relevant data   ***
+
+  CASE phier.
+    WHEN 'FS ITEM HIERARCHY(BS_PL_IND)'.
+      inphier = 'CS15/Y1/BS_PL_IND'.
+      nodecls = 'Y1'.
+    WHEN 'FS ITEM HIERARCHY (BS_PL_IFR)'.
+      inphier = 'CS15/Y1/BS_PL_IFR'.
+      nodecls = 'Y1'.
+    WHEN 'PROFIT CENTER HIERARCHY'.
+      inphier = 'CS04/TS00/PC_HIER_TSL'.
+      nodecls = 'TS00'.
+    WHEN 'CASH FLOW HIERARCHY'.
+      inphier = 'CS16/Y1/CF_INDAS'.
+      nodecls = 'Y1'.
+    WHEN OTHERS.
+      MESSAGE 'Incorrect Entry Selected!' TYPE 'A'.
+      EXIT.
+  ENDCASE.
+
+  SELECT main~hrynode,
+         main~parnode,
+         main~nodetype,
+         main~nodevalue,
+         main~hryseqnbr,
+         main~hrylevel,
+         text~nodetxt
+    FROM hrrp_node AS main
+    LEFT OUTER JOIN hrrp_nodet AS text
+    ON main~hrynode = text~hrynode AND text~hryid EQ @inphier "'CS15/Y1/BS_PL_IND'
+    AND text~spras = 'E' AND text~hryver EQ 1 AND text~nodecls EQ @nodecls
+    WHERE main~hryid EQ @inphier "'CS15/Y1/BS_PL_IND'
+    AND   main~hryvalfrom LE @sy-datum AND main~hryvalto GE @sy-datum
+    AND   main~hryver EQ 1
+    AND   main~nodecls EQ @nodecls
+    AND   ( main~nodetype EQ 'N' OR main~nodetype EQ 'L' OR main~nodetype EQ 'R')
+    INTO CORRESPONDING FIELDS OF TABLE @it_data.
+
+***   Order wise data entry to final table   ***
+
+  lines = lines( it_data ).
+
+  IF it_data IS NOT INITIAL.
+
+    CLEAR: hlvl, parent.
+    seq = '001'.
+    flag = 0.
+    counter = 0.
+
+    WHILE flag LE 10000 AND lines > lines( it_final ). "flag = 0.
+
+      flag = flag + 1.
+
+      IF ( nodetype = 'L' OR nodetype = 'X' ) AND counter > 0 AND currhier NE '001'.
+
+        READ TABLE it_final ASSIGNING FIELD-SYMBOL(<fs_leaf>)
+          WITH KEY hierarchy = currhier.
+
+        IF sy-subrc = 0.
+
+          parent = <fs_leaf>-parnode.
+          seq = <fs_leaf>-hryseqnbr.
+          hlvl = <fs_leaf>-hrylevel.
+
+        ENDIF.
+
+***     currently 001.001.001.005
+***     next sibling we need 001.001.001.006
+
+        lv_length = strlen( currhier ) - 3.
+        subhier = currhier+lv_length(3).
+        subhier = subhier + 1.
+        subhn = subhier.
+        SHIFT subhn RIGHT DELETING TRAILING space.
+        OVERLAY subhn WITH '000'.
+        subhier = subhn.
+        lv_length = lv_length - 1.
+        currhier = currhier(lv_length).
+        CONCATENATE currhier subhier INTO currhier SEPARATED BY '.'.
+        CLEAR lv_length.
+        SHIFT subhn LEFT DELETING LEADING '0'.
+
+        hlvl = hlvl.
+        seq = seq + 1.
+        temp = 's'.
+
+      ELSEIF ( nodetype = 'N' OR nodetype = 'R' ) AND counter > 0.
+
+        hlvl = hlvl + 1.
+        parent = hrynode.
+        IF temp = 's'.
+          seq = '001'.
+          subhier = '001'.
+        ENDIF.
+        CONCATENATE currhier subhier INTO currhier SEPARATED BY '.'.
+        temp = 'c'.
+
+      ENDIF.
+
+****  Find Data  ****
+
+      READ TABLE it_data ASSIGNING FIELD-SYMBOL(<fs_data>)
+        WITH KEY hrylevel = hlvl
+                 hryseqnbr = seq
+                 parnode = parent.
+
+      IF sy-subrc = 0.
+
+****    Root Node    ****
+
+        IF <fs_data>-nodetype = 'R'.
+
+          counter = counter + 1.
+          nodetype = <fs_data>-nodetype.
+          hrynode = <fs_data>-hrynode.
+
+          wa_final-idx = counter.
+          wa_final-hierarchy = currhier.
+          wa_final-hrynode = <fs_data>-hrynode.
+          wa_final-parnode = <fs_data>-parnode.
+          wa_final-nodetype = <fs_data>-nodetype.
+          wa_final-nodevalue = <fs_data>-nodevalue.
+          wa_final-hryseqnbr = <fs_data>-hryseqnbr.
+          wa_final-hrylevel = <fs_data>-hrylevel.
+          wa_final-nodetxt = <fs_data>-nodetxt.
+
+          APPEND wa_final TO it_final.
+
+          subhier = '001'.
+          currhier = '001'.
+
+        ELSE.
+
+****    Nodes/Leaves    ****
+
+          counter = counter + 1.
+          nodetype = <fs_data>-nodetype.
+          hrynode = <fs_data>-hrynode.
+
+          wa_final-idx = counter.
+          wa_final-hierarchy = currhier.
+          wa_final-hrynode = <fs_data>-hrynode.
+          wa_final-parnode = <fs_data>-parnode.
+          wa_final-nodetype = <fs_data>-nodetype.
+          wa_final-nodevalue = <fs_data>-nodevalue.
+          wa_final-hryseqnbr = <fs_data>-hryseqnbr.
+          wa_final-hrylevel = <fs_data>-hrylevel.
+          wa_final-nodetxt = <fs_data>-nodetxt.
+
+          APPEND wa_final TO it_final.
+
+        ENDIF.
+
+        CLEAR wa_final.
+        CONTINUE.
+
+      ELSE.
+
+****    For No more child left    "Not reqd. Can be commented out.
+
+        IF temp = 'c'.            "Not reqd. Can be commented out.
+
+          nodetype = 'X'.         "Not reqd. Can be commented out.
+
+****    For No more siblings left    ****
+
+        ELSEIF temp = 's'.
+
+****      currently 001.001.001.005
+****      no siblings so we need 001.001.002
+****      if 'L' or 'X' condition calculates next sibling so we need to set it to 001.001.001
+
+          nodetype = 'X'.
+          IF currhier NE '001'.
+            lv_length = strlen( currhier ) - 4.
+            currhier = currhier(lv_length).
+          ELSE.
+            flag = 10001.
+          ENDIF.
+
+        ENDIF.
+
+        CONTINUE.
+
+      ENDIF.
+
+    ENDWHILE.
+
+  ENDIF.
+
+ENDFORM.
+
+FORM load_data_to_table.
+
+  IF it_final[] IS NOT INITIAL.
+
+    DELETE FROM ymfat_fsitmhier
+      WHERE hryid EQ inphier. "'CS15/Y1/BS_PL_IND'.
+    IF sy-subrc EQ 0.
+      COMMIT WORK.
+    ENDIF.
+
+    LOOP AT it_final INTO wa_final.
+
+      MOVE-CORRESPONDING wa_final TO ymfat_fsitmhier.
+
+      ymfat_fsitmhier-idx = wa_final-idx.
+      ymfat_fsitmhier-hierarchy = wa_final-hierarchy.
+      ymfat_fsitmhier-hryid = inphier. "'CS15/Y1/BS_PL_IND'.
+      ymfat_fsitmhier-hrynode = wa_final-hrynode.
+      ymfat_fsitmhier-parNODE = wa_final-parNODE.
+      ymfat_fsitmhier-nodetype = wa_final-nodetype.
+      ymfat_fsitmhier-nodevalue = wa_final-nodevalue.
+      ymfat_fsitmhier-hryseqnbr = wa_final-hryseqnbr.
+      ymfat_fsitmhier-hrylevel = wa_final-hrylevel.
+      ymfat_fsitmhier-nodetxt = wa_final-nodetxt.
+
+      MODIFY ymfat_fsitmhier.
+      CLEAR: ymfat_fsitmhier, wa_final.
+
+    ENDLOOP.
+
+    IF sy-subrc EQ 0.
+      COMMIT WORK AND WAIT.
+      MESSAGE 'Data exported to Table' TYPE 'S'.
+    ENDIF.
+
+  ELSE.
+    MESSAGE 'Data not exported - Table is Empty!' TYPE 'I'.
+  ENDIF.
+
+ENDFORM.
+
+FORM display_data.
+
+  REFRESH t_fieldcatalog.
+  PERFORM build_fieldcatalog.
+  PERFORM build_layout.
+  PERFORM display_alv_report.
+
+ENDFORM.
+
+FORM build_fieldcatalog .
+  REFRESH t_fieldcatalog.
+  CLEAR t_fieldcatalog.
+
+*  t_fieldcatalog-tabname     = 'it_final'.                 "#EC NOTEXT
+*  t_fieldcatalog-fieldname   = 'hierarchy'.                "#EC NOTEXT
+*  t_fieldcatalog-outputlen   = '80'.                       "#EC NOTEXT
+*  t_fieldcatalog-col_pos     = 2.
+*  t_fieldcatalog-seltext_l   = 'Hierarchy'.
+*  APPEND t_fieldcatalog TO t_fieldcatalog.
+*  CLEAR  t_fieldcatalog.
+
+  t_fieldcatalog-tabname     = 'it_final'.                  "#EC NOTEXT
+  t_fieldcatalog-fieldname   = 'hrylevel'.                  "#EC NOTEXT
+  t_fieldcatalog-outputlen   = '6'.                         "#EC NOTEXT
+  t_fieldcatalog-col_pos     = 3.
+  t_fieldcatalog-seltext_l   = 'Hierarchy Level'.
+  APPEND t_fieldcatalog TO t_fieldcatalog.
+  CLEAR  t_fieldcatalog.
+
+*  t_fieldcatalog-tabname     = 'it_final'.                 "#EC NOTEXT
+*  t_fieldcatalog-fieldname   = 'HRYSEQNBR'.                "#EC NOTEXT
+*  t_fieldcatalog-outputlen   = '6'.                       "#EC NOTEXT
+*  t_fieldcatalog-col_pos     = 4.
+*  t_fieldcatalog-seltext_l   = 'Hierarchy Sequence No.'.
+*  APPEND t_fieldcatalog TO t_fieldcatalog.
+*  CLEAR  t_fieldcatalog.
+
+  t_fieldcatalog-tabname     = 'it_final'.                  "#EC NOTEXT
+  t_fieldcatalog-fieldname   = 'hrynode'.                   "#EC NOTEXT
+  t_fieldcatalog-outputlen   = '40'.                        "#EC NOTEXT
+  t_fieldcatalog-col_pos     = 5.
+  t_fieldcatalog-seltext_l   = 'Hierarchy Node'.
+  APPEND t_fieldcatalog TO t_fieldcatalog.
+  CLEAR  t_fieldcatalog.
+
+  t_fieldcatalog-tabname     = 'it_final'.                  "#EC NOTEXT
+  t_fieldcatalog-fieldname   = 'parnode'.                   "#EC NOTEXT
+  t_fieldcatalog-outputlen   = '40'.                        "#EC NOTEXT
+  t_fieldcatalog-col_pos     = 11.
+  t_fieldcatalog-seltext_l   = 'Parent Node'.
+  APPEND t_fieldcatalog TO t_fieldcatalog.
+  CLEAR  t_fieldcatalog.
+
+  t_fieldcatalog-tabname     = 'it_final'.                  "#EC NOTEXT
+  t_fieldcatalog-fieldname   = 'nodetype'.                  "#EC NOTEXT
+  t_fieldcatalog-outputlen   = '3'.                         "#EC NOTEXT
+  t_fieldcatalog-col_pos     = 12.
+  t_fieldcatalog-seltext_l   = 'Node Type'.
+  APPEND t_fieldcatalog TO t_fieldcatalog.
+  CLEAR  t_fieldcatalog.
+
+  t_fieldcatalog-tabname     = 'it_final'.                  "#EC NOTEXT
+  t_fieldcatalog-fieldname   = 'nodevalue'.                 "#EC NOTEXT
+  t_fieldcatalog-outputlen   = '40'.                        "#EC NOTEXT
+  t_fieldcatalog-col_pos     = 10.
+  t_fieldcatalog-seltext_l   = 'Node Value'.
+  APPEND t_fieldcatalog TO t_fieldcatalog.
+  CLEAR  t_fieldcatalog.
+
+  t_fieldcatalog-tabname     = 'it_final'.                  "#EC NOTEXT
+  t_fieldcatalog-fieldname   = 'nodetxt'.                   "#EC NOTEXT
+  t_fieldcatalog-outputlen   = '40'.                        "#EC NOTEXT
+  t_fieldcatalog-col_pos     = 9.
+  t_fieldcatalog-seltext_l   = 'Description'.
+  APPEND t_fieldcatalog TO t_fieldcatalog.
+  CLEAR  t_fieldcatalog.
+
+ENDFORM.
+
+FORM build_layout .
+  t_gd_layout-no_input          = 'X'.                      "#EC NOTEXT
+  t_gd_layout-colwidth_optimize = 'X'.                      "#EC NOTEXT
+  t_gd_layout-totals_text       = 'Totals'.                 "#EC NOTEXT
+  t_gd_layout-zebra             = 'X'.                      "#EC NOTEXT
+ENDFORM.
+
+FORM display_alv_report.
+
+  t_gd_repid = sy-repid.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program = t_gd_repid
+      is_layout          = t_gd_layout
+      it_fieldcat        = t_fieldcatalog[]
+      i_save             = 'X'
+    TABLES
+      t_outtab           = it_final
+    EXCEPTIONS
+      program_error      = 1
+      OTHERS             = 2.
+  IF sy-subrc <> 0.
+
+  ENDIF.
+
+ENDFORM.
